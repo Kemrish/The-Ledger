@@ -32,10 +32,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@4
+        uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@5
+        uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
@@ -54,7 +54,7 @@ jobs:
           PYTHONPATH: ${{ github.workspace }}
 
       - name: Upload test log (for interim PDF)
-        uses: actions/upload-artifact@4
+        uses: actions/upload-artifact@v4
         if: always()
         with:
           name: test-log
