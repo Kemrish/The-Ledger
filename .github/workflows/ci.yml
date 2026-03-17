@@ -1,0 +1,64 @@
+# CI: Postgres + migrations + tests; upload test log as artifact for interim PDF.
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:  # "Run workflow" button in Actions tab
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: ledger_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      LEDGER_TEST_DSN: postgresql://postgres:postgres@localhost:5432/ledger_test
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@4
+
+      - name: Set up Python
+        uses: actions/setup-python@5
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+
+      - name: Install dependencies
+        run: uv sync --all-extras
+
+      - name: Run tests and capture log
+        run: |
+          uv run pytest tests/ -v --tb=short --junitxml=test-results.xml 2>&1 | tee test-output.log
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+
+      - name: Upload test log (for interim PDF)
+        uses: actions/upload-artifact@4
+        if: always()
+        with:
+          name: test-log
+          path: |
+            test-output.log
+            test-results.xml
+          retention-days: 90
