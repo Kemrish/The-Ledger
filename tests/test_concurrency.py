@@ -22,7 +22,7 @@ async def apply_schema(conn) -> None:
 
 
 @pytest.fixture
-async def conn_and_store():
+async def dsn_and_schema():
     dsn = os.environ.get(
         "LEDGER_TEST_DSN",
         "postgresql://postgres:postgres@localhost:5432/ledger_test",
@@ -32,18 +32,20 @@ async def conn_and_store():
     except Exception as e:
         pytest.skip(f"PostgreSQL not available: {e}")
     await apply_schema(conn)
-    store = EventStore(conn)
-    yield conn, store
     await conn.close()
+    yield dsn
 
 
 @pytest.mark.asyncio
-async def test_double_decision_concurrency(conn_and_store):
+async def test_double_decision_concurrency(dsn_and_schema):
     """Two agents both append at expected_version=3; one wins, one gets OptimisticConcurrencyError; stream has 4 events."""
-    conn, store = conn_and_store
+    dsn = dsn_and_schema
 
     app_id = f"test-app-{uuid.uuid4().hex[:12]}"
     stream_id = f"loan-{app_id}"
+    # Seed stream with 3 events so current_version = 3 (single connection)
+    conn_seed = await asyncpg.connect(dsn)
+    store_seed = EventStore(conn_seed)
     # Seed stream with 3 events so current_version = 3
     for i in range(3):
         ev = CreditAnalysisCompleted(
@@ -57,21 +59,24 @@ async def test_double_decision_concurrency(conn_and_store):
             analysis_duration_ms=50,
             input_data_hash="abc",
         )
-        await store.append(
+        await store_seed.append(
             stream_id,
             [ev],
             expected_version=-1 if i == 0 else i,
         )
 
-    version_after_seed = await store.stream_version(stream_id)
+    version_after_seed = await store_seed.stream_version(stream_id)
     assert version_after_seed == 3, "Stream must have 3 events before concurrent append"
+    await conn_seed.close()
 
     winner_result: list[int] = []
     loser_error: list[Exception] = []
 
     async def agent_a():
+        conn_a = await asyncpg.connect(dsn)
+        store_a = EventStore(conn_a)
         try:
-            v = await store.append(
+            v = await store_a.append(
                 stream_id,
                 [
                     CreditAnalysisCompleted(
@@ -91,10 +96,14 @@ async def test_double_decision_concurrency(conn_and_store):
             winner_result.append(v)
         except OptimisticConcurrencyError as e:
             loser_error.append(e)
+        finally:
+            await conn_a.close()
 
     async def agent_b():
+        conn_b = await asyncpg.connect(dsn)
+        store_b = EventStore(conn_b)
         try:
-            v = await store.append(
+            v = await store_b.append(
                 stream_id,
                 [
                     CreditAnalysisCompleted(
@@ -114,11 +123,16 @@ async def test_double_decision_concurrency(conn_and_store):
             winner_result.append(v)
         except OptimisticConcurrencyError as e:
             loser_error.append(e)
+        finally:
+            await conn_b.close()
 
     await asyncio.gather(agent_a(), agent_b())
 
     # (a) Total events in stream = 4 (not 5)
-    final_version = await store.stream_version(stream_id)
+    conn_check = await asyncpg.connect(dsn)
+    store_check = EventStore(conn_check)
+    final_version = await store_check.stream_version(stream_id)
+    await conn_check.close()
     assert final_version == 4, f"Expected 4 events in stream, got {final_version}"
 
     # (b) Exactly one task succeeded and got new version 4
