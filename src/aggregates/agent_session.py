@@ -43,10 +43,20 @@ class AgentSessionAggregate:
         self.model_version = event.payload.get("model_version")
 
     def _on_CreditAnalysisCompleted(self, event: StoredEvent) -> None:
-        # Decision-type event: must have had context loaded
+        # Gas Town: replay order must include AgentContextLoaded before any decision event.
+        if not self.context_loaded:
+            raise DomainError(
+                "Invalid stream: CreditAnalysisCompleted before AgentContextLoaded",
+                code="GAS_TOWN_VIOLATION",
+            )
         self.application_ids_with_decision.add(event.payload.get("application_id", ""))
 
     def _on_FraudScreeningCompleted(self, event: StoredEvent) -> None:
+        if not self.context_loaded:
+            raise DomainError(
+                "Invalid stream: FraudScreeningCompleted before AgentContextLoaded",
+                code="GAS_TOWN_VIOLATION",
+            )
         self.application_ids_with_decision.add(event.payload.get("application_id", ""))
 
     def assert_context_loaded(self) -> None:

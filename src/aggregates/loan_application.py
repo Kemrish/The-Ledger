@@ -66,20 +66,17 @@ class LoanApplicationAggregate:
         agg = cls(application_id=application_id)
         for event in events:
             agg._apply(event)
-        # Compliance dependency: resolve from compliance stream so assert_can_approve can enforce
-        try:
-            comp_events = await store.load_stream(f"compliance-{application_id}")
-            if comp_events:
-                required: set[str] = set()
-                passed: set[str] = set()
-                for e in comp_events:
-                    if e.event_type == "ComplianceCheckRequested":
-                        required = set(e.payload.get("checks_required", []))
-                    elif e.event_type == "ComplianceRulePassed":
-                        passed.add(e.payload.get("rule_id", ""))
-                agg.compliance_cleared = bool(required and required.issubset(passed))
-        except Exception:
-            agg.compliance_cleared = False
+        # Compliance dependency: separate aggregate stream; merge for approval invariants.
+        comp_events = await store.load_stream(f"compliance-{application_id}")
+        if comp_events:
+            required: set[str] = set()
+            passed: set[str] = set()
+            for e in comp_events:
+                if e.event_type == "ComplianceCheckRequested":
+                    required = set(e.payload.get("checks_required", []))
+                elif e.event_type == "ComplianceRulePassed":
+                    passed.add(e.payload.get("rule_id", ""))
+            agg.compliance_cleared = bool(required and required.issubset(passed))
         return agg
 
     def _apply(self, event: StoredEvent) -> None:

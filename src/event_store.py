@@ -5,17 +5,24 @@ from __future__ import annotations
 
 import json
 from collections.abc import AsyncIterator
-from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
 import asyncpg
 
 from .models.events import (
     BaseEvent,
+    DomainError,
     StoredEvent,
     StreamMetadata,
     OptimisticConcurrencyError,
 )
+
+
+def _jsonb_to_python(value: object) -> object:
+    """Normalize JSONB from asyncpg (dict or legacy string) when composing nested payloads."""
+    if isinstance(value, str):
+        return json.loads(value)
+    return value
 
 
 def _event_to_row(stream_id: str, stream_position: int, event: BaseEvent, event_version: int = 1) -> tuple[UUID, str, int, str, int, dict, dict]:
@@ -66,7 +73,7 @@ class EventStore:
                 _aggregate_type_from_stream_id(stream_id),
             )
             row = await self._conn.fetchrow(
-                "SELECT current_version FROM event_streams WHERE stream_id = $1 FOR UPDATE",
+                "SELECT current_version, archived_at FROM event_streams WHERE stream_id = $1 FOR UPDATE",
                 stream_id,
             )
             if not row:
@@ -74,6 +81,11 @@ class EventStore:
                     stream_id=stream_id,
                     expected_version=expected_version,
                     actual_version=-1,
+                )
+            if row["archived_at"] is not None:
+                raise DomainError(
+                    f"Stream {stream_id} is archived; appends are not allowed",
+                    code="STREAM_ARCHIVED",
                 )
             current = int(row["current_version"])
 
@@ -107,15 +119,15 @@ class EventStore:
                 await self._conn.execute(
                     """
                     INSERT INTO events (event_id, stream_id, stream_position, event_type, event_version, payload, metadata)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7)
+                    VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb)
                     """,
                     event_id,
                     stream_id,
                     stream_position,
                     event_type,
                     event_version,
-                    json.dumps(payload) if isinstance(payload, dict) else payload,
-                    json.dumps(metadata),
+                    payload,
+                    metadata,
                 )
                 event_ids.append(event_id)
                 new_version = pos + 1
@@ -131,14 +143,19 @@ class EventStore:
                 payload_row = await self._conn.fetchrow(
                     "SELECT payload, metadata FROM events WHERE event_id = $1", event_id
                 )
+                out_payload = {
+                    "event_id": str(event_id),
+                    "payload": _jsonb_to_python(payload_row["payload"]),
+                    "metadata": _jsonb_to_python(payload_row["metadata"]),
+                }
                 await self._conn.execute(
                     """
                     INSERT INTO outbox (event_id, destination, payload)
-                    VALUES ($1, $2, $3)
+                    VALUES ($1, $2, $3::jsonb)
                     """,
                     event_id,
                     self._outbox_destination,
-                    json.dumps({"event_id": str(event_id), "payload": payload_row["payload"], "metadata": payload_row["metadata"]}),
+                    out_payload,
                 )
 
         return new_version

@@ -8,14 +8,28 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
-# --- Exceptions (typed for LLM/agent consumption) ---
+# --- Exceptions (typed for LLM/agent consumption; no domain logic in models) ---
 
 
-class OptimisticConcurrencyError(Exception):
-    """Raised when append expected_version does not match stream's current version."""
+class LedgerError(Exception):
+    """Base for store- and domain-level errors that callers should handle explicitly."""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "error_type": self.__class__.__name__,
+            "message": str(self),
+        }
+
+
+class OptimisticConcurrencyError(LedgerError):
+    """
+    Raised when append expected_version does not match the stream row's current_version
+    after SELECT ... FOR UPDATE (optimistic locking). actual_version is the observed
+    version at commit time; retry by reloading the stream and re-applying commands.
+    """
 
     def __init__(
         self,
@@ -34,17 +48,19 @@ class OptimisticConcurrencyError(Exception):
         )
 
     def to_dict(self) -> dict[str, Any]:
-        return {
-            "error_type": "OptimisticConcurrencyError",
-            "message": str(self),
-            "stream_id": self.stream_id,
-            "expected_version": self.expected_version,
-            "actual_version": self.actual_version,
-            "suggested_action": self.suggested_action,
-        }
+        base = super().to_dict()
+        base.update(
+            {
+                "stream_id": self.stream_id,
+                "expected_version": self.expected_version,
+                "actual_version": self.actual_version,
+                "suggested_action": self.suggested_action,
+            }
+        )
+        return base
 
 
-class DomainError(Exception):
+class DomainError(LedgerError):
     """Raised when a business rule is violated (state machine, invariants, preconditions)."""
 
     def __init__(self, message: str, code: str | None = None):
@@ -52,11 +68,9 @@ class DomainError(Exception):
         super().__init__(message)
 
     def to_dict(self) -> dict[str, Any]:
-        return {
-            "error_type": "DomainError",
-            "message": str(self),
-            "code": self.code,
-        }
+        base = super().to_dict()
+        base["code"] = self.code
+        return base
 
 
 # --- Base event (for appending) and stored event (from store, with store metadata) ---
@@ -65,11 +79,13 @@ class DomainError(Exception):
 class BaseEvent(BaseModel):
     """Base for all domain events. Subclasses define event_type and payload shape."""
 
-    model_config = {"extra": "allow"}
+    model_config = ConfigDict(extra="allow")
 
 
 class StoredEvent(BaseModel):
     """Event as loaded from the store: payload + store metadata. Upcasting applied at load time."""
+
+    model_config = ConfigDict(extra="ignore")
 
     event_id: UUID
     stream_id: str
