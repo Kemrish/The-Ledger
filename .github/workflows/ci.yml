@@ -49,7 +49,8 @@ jobs:
 
       - name: Run tests and capture log
         run: |
-          uv run pytest tests/ -v --tb=short --junitxml=test-results.xml 2>&1 | tee test-output.log
+          # -s: show stdout so CONCURRENCY_TEST_PROOF block appears in test-output.log artifact
+          uv run pytest tests/ -v -s --tb=short --junitxml=test-results.xml 2>&1 | tee test-output.log
         env:
           PYTHONPATH: ${{ github.workspace }}
 

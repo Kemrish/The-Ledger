@@ -66,7 +66,7 @@ Required: PostgreSQL running and schema applied (tests apply schema in fixtures)
 
 ### CI (GitHub Actions)
 
-On push/PR to `main` or `master`, the workflow runs tests against a Postgres 16 service and uploads the test log as an artifact.
+On push/PR to `main` or `master`, the workflow runs tests against a Postgres 16 service and uploads the test log as an artifact. CI uses `pytest -s` so the concurrency test’s **`CONCURRENCY_TEST_PROOF`** stdout block appears in `test-output.log`.
 
 1. Push the repo to GitHub and open the **Actions** tab.
 2. After the run finishes, open the latest workflow run → **Summary**.

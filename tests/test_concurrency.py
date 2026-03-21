@@ -143,3 +143,20 @@ async def test_double_decision_concurrency(dsn_and_schema):
     assert loser_error[0].expected_version == 3
     assert loser_error[0].actual_version == 4
     assert loser_error[0].suggested_action == "reload_stream_and_retry"
+
+    # Visible in CI logs when pytest runs with -s (see .github/workflows/ci.yml).
+    # Maps directly to assessment: stream length, winning version, losing OptimisticConcurrencyError fields.
+    oce = loser_error[0]
+    print(
+        "\n=== CONCURRENCY_TEST_PROOF (double-decision) ===\n"
+        f"  stream_id:                    {stream_id}\n"
+        f"  final_stream_version:         {final_version}  (equals event count; MUST be 4)\n"
+        f"  winner_count:                 {len(winner_result)}  (MUST be 1)\n"
+        f"  winner_append_returned:       {winner_result[0]}  (new current_version; MUST be 4)\n"
+        f"  loser_error_type:             {type(oce).__name__}\n"
+        f"  loser_expected_version:       {oce.expected_version}  (MUST be 3)\n"
+        f"  loser_actual_version:         {oce.actual_version}  (MUST be 4)\n"
+        f"  loser_suggested_action:       {oce.suggested_action}\n"
+        "=== END CONCURRENCY_TEST_PROOF ===\n",
+        flush=True,
+    )
