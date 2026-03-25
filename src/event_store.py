@@ -40,9 +40,10 @@ class EventStore:
     Append with expected_version; load streams or global log; outbox written in same transaction.
     """
 
-    def __init__(self, conn: asyncpg.Connection, outbox_destination: str = "default"):
+    def __init__(self, conn: asyncpg.Connection, outbox_destination: str = "default", upcaster_registry: object | None = None):
         self._conn = conn
         self._outbox_destination = outbox_destination
+        self._upcaster_registry = upcaster_registry
 
     async def append(
         self,
@@ -180,7 +181,10 @@ class EventStore:
         q += " ORDER BY stream_position ASC"
 
         rows = await self._conn.fetch(q, *params)
-        return [_row_to_stored(r) for r in rows]
+        events = [_row_to_stored(r) for r in rows]
+        if self._upcaster_registry is not None:
+            events = [self._upcaster_registry.upcast(e) for e in events]
+        return events
 
     async def load_all(
         self,
@@ -208,7 +212,10 @@ class EventStore:
             if not rows:
                 break
             for r in rows:
-                yield _row_to_stored(r)
+                event = _row_to_stored(r)
+                if self._upcaster_registry is not None:
+                    event = self._upcaster_registry.upcast(event)
+                yield event
                 pos = r["global_position"]
             if len(rows) < batch_size:
                 break

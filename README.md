@@ -6,6 +6,7 @@ Event sourcing and audit backbone for multi-agent AI systems (Apex Financial Ser
 
 - **Python 3.11+**
 - **PostgreSQL** (for event store and tests)
+- **Gemini API key** (optional unless using Gemini-backed decision generation)
 
 ### Install (uv)
 
@@ -25,6 +26,30 @@ createdb ledger_test
 # Optional: override DSN
 set LEDGER_TEST_DSN=postgresql://user:pass@localhost:5432/ledger_test
 ```
+
+### Environment variables
+
+Create `.env` from `.env.example` and fill your keys/settings:
+
+```bash
+copy .env.example .env
+```
+
+Required when using Gemini-backed tool flow:
+
+- `GEMINI_API_KEY`
+- `.env` is auto-loaded via `python-dotenv` in `GeminiDecisionAgent`; no hardcoded keys in source.
+
+`generate_decision` in `src/mcp/tools.py` now supports Gemini synthesis:
+- If `recommendation` or `decision_basis_summary` is omitted in payload, it calls Gemini.
+- If both are provided, it uses caller-provided values (no external LLM call).
+
+Gemini is also used as assistive inference in additional MCP tool paths:
+- `record_credit_analysis`: can infer `risk_tier`, `recommended_limit_usd`, `confidence_score` when missing.
+- `record_fraud_screening`: can infer `fraud_score` / `anomaly_flags` when missing.
+- `record_compliance_check`: can draft `failure_reason` for failed rules when omitted.
+
+Deterministic domain rules in command handlers/aggregates still remain authoritative.
 
 ### Migrations
 
@@ -81,6 +106,13 @@ You can also trigger a run manually: **Actions** → **CI** → **Run workflow**
 - **Command handlers:** Submit application, start agent session, credit analysis, fraud screening, compliance check, generate decision, human review (load → validate → append).
 - **Business rules:** State machine transitions, Gas Town (context loaded before decisions), confidence floor (REFER if &lt; 0.6), compliance cleared before approval, causal chain for contributing sessions.
 
+## Phase 3–5 Baseline
+
+- **Projections:** `src/projections/daemon.py`, `src/projections/application_summary.py`, `src/projections/agent_performance.py`, `src/projections/compliance_audit.py`
+- **Upcasting:** `src/upcasting/registry.py`, `src/upcasting/upcasters.py` (read-time upcasts)
+- **Integrity:** `src/integrity/audit_chain.py` (hash-chain event), `src/integrity/gas_town.py` (session context reconstruction)
+- **MCP interface modules:** `src/mcp/tools.py`, `src/mcp/resources.py`, `src/mcp/server.py` (runtime entry)
+
 ## Structure
 
 - `src/schema.sql` — Event store tables (events, event_streams, projection_checkpoints, outbox).
@@ -90,3 +122,7 @@ You can also trigger a run manually: **Actions** → **CI** → **Run workflow**
 - `src/commands/` — Command models and handlers.
 - `tests/test_concurrency.py` — Double-decision optimistic concurrency test.
 - `tests/test_phase2_handlers.py` — Phase 2 handler and aggregate flow.
+- `tests/phase3/test_projections_daemon.py` — Projection daemon baseline.
+- `tests/phase4/test_upcasting.py` — Upcasting immutability baseline.
+- `tests/phase4/test_gas_town.py` — Crash recovery context reconstruction baseline.
+- `tests/phase5/test_mcp_lifecycle.py` — MCP tool-driven lifecycle baseline.

@@ -116,3 +116,72 @@ CREATE INDEX IF NOT EXISTS idx_outbox_pending
   ON outbox (destination, created_at)
   WHERE published_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_outbox_event ON outbox (event_id);
+
+-- -----------------------------------------------------------------------------
+-- Phase 3 projection read models
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS application_summary_projection (
+  application_id            TEXT PRIMARY KEY,
+  state                     TEXT NOT NULL,
+  applicant_id              TEXT,
+  requested_amount_usd      DOUBLE PRECISION,
+  approved_amount_usd       DOUBLE PRECISION,
+  risk_tier                 TEXT,
+  fraud_score               DOUBLE PRECISION,
+  compliance_status         TEXT,
+  decision                  TEXT,
+  agent_sessions_completed  JSONB NOT NULL DEFAULT '[]'::jsonb,
+  last_event_type           TEXT,
+  last_event_at             TIMESTAMPTZ,
+  human_reviewer_id         TEXT,
+  final_decision_at         TIMESTAMPTZ,
+  updated_at                TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_app_summary_state ON application_summary_projection (state);
+CREATE INDEX IF NOT EXISTS idx_app_summary_updated ON application_summary_projection (updated_at);
+
+CREATE TABLE IF NOT EXISTS agent_performance_projection (
+  agent_id                  TEXT NOT NULL,
+  model_version             TEXT NOT NULL,
+  analyses_completed        BIGINT NOT NULL DEFAULT 0,
+  decisions_generated       BIGINT NOT NULL DEFAULT 0,
+  avg_confidence_score      DOUBLE PRECISION,
+  avg_duration_ms           DOUBLE PRECISION,
+  approve_rate              DOUBLE PRECISION,
+  decline_rate              DOUBLE PRECISION,
+  refer_rate                DOUBLE PRECISION,
+  human_override_rate       DOUBLE PRECISION,
+  first_seen_at             TIMESTAMPTZ,
+  last_seen_at              TIMESTAMPTZ,
+  updated_at                TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (agent_id, model_version)
+);
+CREATE INDEX IF NOT EXISTS idx_agent_perf_updated ON agent_performance_projection (updated_at);
+
+CREATE TABLE IF NOT EXISTS compliance_audit_projection (
+  application_id            TEXT NOT NULL,
+  as_of_event_position      BIGINT NOT NULL,
+  as_of_recorded_at         TIMESTAMPTZ NOT NULL,
+  regulation_set_version    TEXT,
+  checks_required           JSONB NOT NULL DEFAULT '[]'::jsonb,
+  passed_rules              JSONB NOT NULL DEFAULT '[]'::jsonb,
+  failed_rules              JSONB NOT NULL DEFAULT '[]'::jsonb,
+  status                    TEXT NOT NULL,
+  latest_event_type         TEXT NOT NULL,
+  updated_at                TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (application_id, as_of_event_position)
+);
+CREATE INDEX IF NOT EXISTS idx_compliance_audit_time
+  ON compliance_audit_projection (application_id, as_of_recorded_at DESC);
+
+CREATE TABLE IF NOT EXISTS projection_snapshots (
+  id                        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  projection_name           TEXT NOT NULL,
+  entity_id                 TEXT NOT NULL,
+  snapshot_position         BIGINT NOT NULL,
+  snapshot_payload          JSONB NOT NULL,
+  created_at                TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT uq_snapshot_entity_pos UNIQUE (projection_name, entity_id, snapshot_position)
+);
+CREATE INDEX IF NOT EXISTS idx_projection_snapshots_lookup
+  ON projection_snapshots (projection_name, entity_id, snapshot_position DESC);

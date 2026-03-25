@@ -25,11 +25,13 @@ def get_pg_dsn() -> str:
 @pytest.fixture
 async def pg_pool():
     dsn = get_pg_dsn()
+    pool = None
     try:
         pool = await asyncpg.create_pool(dsn, min_size=1, max_size=4, command_timeout=10)
         yield pool
     finally:
-        await pool.close()
+        if pool is not None:
+            await pool.close()
 
 
 @pytest.fixture
