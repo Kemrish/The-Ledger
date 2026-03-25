@@ -1,4 +1,4 @@
-# The Ledger — Design & Rubric Mapping
+# The Ledger — Design
 
 This document satisfies assessment criteria for **schema justification**, **CQRS/projection strategy**, **concurrency**, **upcasting**, **integrity**, and **MCP** interfaces. It complements `DOMAIN_NOTES.md` (conceptual) with **implementation-specific** decisions.
 
@@ -60,6 +60,7 @@ This document satisfies assessment criteria for **schema justification**, **CQRS
 ## 4. Aggregates & business rules
 
 - Implemented under `src/aggregates/` (`loan_application`, `agent_session`, `compliance_record`, …) with `load()` + `_apply()` and `DomainError` on invalid transitions.
+- **Decision policy** lives on `LoanApplicationAggregate`: `resolve_decision_recommendation()` applies the **confidence floor** (`DECISION_CONFIDENCE_FLOOR`); `assert_contributing_agent_sessions()` enforces the causal chain. Command handlers orchestrate I/O only (load aggregates, append), not these rules.
 - **Gas Town**: `AgentSession` requires `AgentContextLoaded` before decision events (see command handlers).
 
 ---
@@ -70,14 +71,15 @@ This document satisfies assessment criteria for **schema justification**, **CQRS
 - **Projections**: `ApplicationSummary`, `AgentPerformanceLedger`, `ComplianceAuditView` — tables in `src/schema.sql`.
 - **Compliance temporal query**: `ComplianceAuditProjection.get_compliance_at(store, application_id, as_of)` uses `as_of_recorded_at` and `as_of_event_position` history.
 - **Rebuild**: each projection exposes `rebuild_from_scratch`; `rebuild_projections_full()` truncates and resets checkpoints; `rebuild_projections_from_scratch()` additionally runs `ProjectionDaemon` until lag is zero.
+- **Load SLO**: `tests/phase3/test_projection_load_slo.py` — concurrent submits (connection pool), bounded catch-up time, then `rebuild_projections_from_scratch` with row-count assertions.
 
 ---
 
 ## 6. Upcaster registry & cryptographic integrity
 
 - **`UpcasterRegistry`** (`src/upcasting/registry.py`): chain of `(event_type, version)` → payload transforms.
-- **Upcasters** (`src/upcasting/upcasters.py`): `CreditAnalysisCompleted` v1→v2, `DecisionGenerated` v1→v2.
-- **Immutability**: `tests/phase4/test_upcasting.py` asserts raw DB payload unchanged after load.
+- **Upcasters** (`src/upcasting/upcasters.py`): `CreditAnalysisCompleted` v1→v2, `DecisionGenerated` v1→v2 — **unknown historical fields use JSON `null`**, not synthetic placeholder strings.
+- **Immutability**: `tests/phase4/test_upcasting.py` — append-path JSON fingerprint unchanged; raw SQL v1 row `payload::text` and `event_version` unchanged after load while in-memory upcast sees v2.
 - **Audit chain** (`src/integrity/audit_chain.py`): `verify_audit_chain` recomputes every stored checkpoint; `run_integrity_check` verifies first, then appends a new `AuditIntegrityCheckRun` only if the chain is valid (otherwise returns `chain_valid=False`, `tamper_detected=True` with **no** append). Hashes chain previous `integrity_hash` with ordered primary-stream event digests on `audit-{entity_type}-{entity_id}`. **Convention**: for loan applications use `entity_type="loan"` and `entity_id=<application_id>` so the primary stream is `loan-{id}`.
 
 ---

@@ -15,7 +15,10 @@ class AgentPerformanceProjection:
         agent_id = p.get("agent_id") or p.get("orchestrator_agent_id")
         if not agent_id:
             return
-        model_version = p.get("model_version") or p.get("model_versions", {}).get(agent_id) or "unknown"
+        mv_map = p.get("model_versions")
+        if not isinstance(mv_map, dict):
+            mv_map = {}
+        model_version = p.get("model_version") or mv_map.get(agent_id) or "unknown"
 
         is_analysis = 1 if event.event_type == "CreditAnalysisCompleted" else 0
         is_decision = 1 if event.event_type == "DecisionGenerated" else 0

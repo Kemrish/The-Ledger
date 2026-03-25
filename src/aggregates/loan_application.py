@@ -8,6 +8,7 @@ from enum import Enum
 from typing import TYPE_CHECKING
 
 from ..models.events import StoredEvent, DomainError
+from .agent_session import AgentSessionAggregate
 
 if TYPE_CHECKING:
     from ..event_store import EventStore
@@ -44,6 +45,9 @@ VALID_TRANSITIONS: dict[ApplicationState, set[ApplicationState]] = {
 
 class LoanApplicationAggregate:
     """Reconstructed by replaying loan-{application_id} stream."""
+
+    # Orchestrator outputs below this confidence must be treated as REFER (policy / risk).
+    DECISION_CONFIDENCE_FLOOR: float = 0.6
 
     def __init__(self, application_id: str) -> None:
         self.application_id = application_id
@@ -199,3 +203,19 @@ class LoanApplicationAggregate:
                 f"Application not in DeclinedPendingHuman; state={self.state}",
                 code="INVALID_STATE",
             )
+
+    def resolve_decision_recommendation(self, recommendation: str, confidence_score: float) -> str:
+        """Apply confidence floor: low-confidence decisions are coerced to REFER."""
+        r = (recommendation or "").strip().upper()
+        if confidence_score < self.DECISION_CONFIDENCE_FLOOR:
+            return "REFER"
+        return r
+
+    def assert_contributing_agent_sessions(self, sessions: list[AgentSessionAggregate]) -> None:
+        """Each session must have produced analysis for this application (Gas Town / causal chain)."""
+        for s in sessions:
+            if not s.has_decision_for_application(self.application_id):
+                raise DomainError(
+                    f"Session agent-{s.agent_id}-{s.session_id} has no decision event for application {self.application_id}",
+                    code="CAUSAL_CHAIN_VIOLATION",
+                )

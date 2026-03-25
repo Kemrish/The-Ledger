@@ -151,12 +151,13 @@ class CreditAnalysisCompleted(BaseEvent):
     application_id: str
     agent_id: str
     session_id: str
-    model_version: str
+    model_version: str | None = None  # null after upcast when absent in historical v1 payloads
     confidence_score: float | None
     risk_tier: str
     recommended_limit_usd: float
     analysis_duration_ms: int
     input_data_hash: str
+    regulatory_basis: str | None = None  # v2 field; null when unknown
 
 
 class FraudScreeningCompleted(BaseEvent):
@@ -207,7 +208,7 @@ class DecisionGenerated(BaseEvent):
     confidence_score: float
     contributing_agent_sessions: list[str]
     decision_basis_summary: str
-    model_versions: dict[str, str] = Field(default_factory=dict)
+    model_versions: dict[str, str] | None = None  # null when unknown after upcast from v1
 
 
 class HumanReviewCompleted(BaseEvent):

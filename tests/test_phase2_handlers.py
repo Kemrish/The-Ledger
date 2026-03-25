@@ -47,6 +47,13 @@ async def store():
     await conn.close()
 
 
+def test_loan_aggregate_confidence_floor_coerces_refer():
+    app = LoanApplicationAggregate(application_id="x")
+    assert app.resolve_decision_recommendation("APPROVE", 0.59) == "REFER"
+    assert app.resolve_decision_recommendation("approve", 0.6) == "APPROVE"
+    assert app.resolve_decision_recommendation("DECLINE", 0.65) == "DECLINE"
+
+
 @pytest.mark.asyncio
 async def test_submit_and_load_aggregate(store):
     await handle_submit_application(

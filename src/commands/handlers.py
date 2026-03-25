@@ -32,8 +32,8 @@ from ..models.events import (
     BaseEvent,
     DomainError,
 )
-from ..aggregates.loan_application import LoanApplicationAggregate
 from ..aggregates.agent_session import AgentSessionAggregate
+from ..aggregates.loan_application import LoanApplicationAggregate
 from ..aggregates.compliance_record import ComplianceRecordAggregate
 from .models import (
     SubmitApplicationCommand,
@@ -233,9 +233,7 @@ async def handle_generate_decision(cmd: GenerateDecisionCommand, store: EventSto
     app = await LoanApplicationAggregate.load(store, cmd.application_id)
     # Validate
     app.assert_analysis_complete()
-    recommendation = cmd.recommendation.upper()
-    if cmd.confidence_score < 0.6:
-        recommendation = "REFER"
+    agents: list[AgentSessionAggregate] = []
     for session_stream_id in cmd.contributing_agent_sessions:
         parts = session_stream_id.replace("agent-", "").split("-", 1)
         if len(parts) < 2:
@@ -244,12 +242,9 @@ async def handle_generate_decision(cmd: GenerateDecisionCommand, store: EventSto
                 code="INVALID_CAUSAL_CHAIN",
             )
         agent_id, session_id = parts[0], parts[1]
-        agent = await AgentSessionAggregate.load(store, agent_id, session_id)
-        if not agent.has_decision_for_application(cmd.application_id):
-            raise DomainError(
-                f"Session {session_stream_id} has no decision event for application {cmd.application_id}",
-                code="CAUSAL_CHAIN_VIOLATION",
-            )
+        agents.append(await AgentSessionAggregate.load(store, agent_id, session_id))
+    app.assert_contributing_agent_sessions(agents)
+    recommendation = app.resolve_decision_recommendation(cmd.recommendation, cmd.confidence_score)
     # Determine
     event = DecisionGenerated(
         application_id=cmd.application_id,
