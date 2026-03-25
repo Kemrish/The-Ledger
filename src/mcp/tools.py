@@ -1,3 +1,17 @@
+"""
+MCP tool handlers (command side of CQRS).
+
+Each async function is suitable for binding to an MCP server (e.g. FastMCP). Return shape:
+  - Success: `{ "ok": true, ... }` or stream-specific ids
+  - Failure: `{ "error": { "error_type", "message", ... } }` — `DomainError` / `OptimisticConcurrencyError`
+    include structured fields for LLM recovery (`suggested_action`, `code`, `stream_id`, …).
+
+Preconditions (representative):
+  - `start_agent_session` MUST run before `record_credit_analysis` / `record_fraud_screening` / `generate_decision`
+    (Gas Town: AgentContextLoaded first).
+  - `submit_application` before domain commands that reference `application_id`.
+  - `generate_decision` requires prior credit + fraud analyses and compliance cleared per aggregate rules.
+"""
 from __future__ import annotations
 
 from ..commands.handlers import (
@@ -36,9 +50,9 @@ async def submit_application(store, payload: dict):
     try:
         cmd = SubmitApplicationCommand(**payload)
         stream_id, version = await handle_submit_application(cmd, store)
-        return {"stream_id": stream_id, "initial_version": version}
+        return {"ok": True, "stream_id": stream_id, "initial_version": version}
     except Exception as exc:
-        return {"error": _tool_error(exc)}
+        return {"ok": False, "error": _tool_error(exc)}
 
 
 async def record_credit_analysis(store, payload: dict):
@@ -62,7 +76,7 @@ async def record_credit_analysis(store, payload: dict):
         await handle_credit_analysis_completed(cmd, store)
         return {"ok": True}
     except Exception as exc:
-        return {"error": _tool_error(exc)}
+        return {"ok": False, "error": _tool_error(exc)}
 
 
 async def record_fraud_screening(store, payload: dict):
@@ -80,7 +94,7 @@ async def record_fraud_screening(store, payload: dict):
         await handle_fraud_screening_completed(cmd, store)
         return {"ok": True}
     except Exception as exc:
-        return {"error": _tool_error(exc)}
+        return {"ok": False, "error": _tool_error(exc)}
 
 
 async def record_compliance_check(store, payload: dict):
@@ -99,7 +113,7 @@ async def record_compliance_check(store, payload: dict):
         await handle_compliance_check(cmd, store)
         return {"ok": True}
     except Exception as exc:
-        return {"error": _tool_error(exc)}
+        return {"ok": False, "error": _tool_error(exc)}
 
 
 async def generate_decision(store, payload: dict):
@@ -118,7 +132,7 @@ async def generate_decision(store, payload: dict):
         await handle_generate_decision(cmd, store)
         return {"ok": True}
     except Exception as exc:
-        return {"error": _tool_error(exc)}
+        return {"ok": False, "error": _tool_error(exc)}
 
 
 async def record_human_review(store, payload: dict):
@@ -127,27 +141,29 @@ async def record_human_review(store, payload: dict):
         await handle_human_review_completed(cmd, store)
         return {"ok": True}
     except Exception as exc:
-        return {"error": _tool_error(exc)}
+        return {"ok": False, "error": _tool_error(exc)}
 
 
 async def start_agent_session(store, payload: dict):
     try:
         cmd = StartAgentSessionCommand(**payload)
         stream_id, context_position = await handle_start_agent_session(cmd, store)
-        return {"session_id": stream_id, "context_position": context_position}
+        return {"ok": True, "session_id": stream_id, "context_position": context_position}
     except Exception as exc:
-        return {"error": _tool_error(exc)}
+        return {"ok": False, "error": _tool_error(exc)}
 
 
 async def run_integrity_check_tool(store, payload: dict):
     try:
         result = await run_integrity_check(store, payload["entity_type"], payload["entity_id"])
         return {
+            "ok": result.chain_valid and not result.tamper_detected,
             "check_result": {
                 "events_verified": result.events_verified,
                 "integrity_hash": result.integrity_hash,
             },
             "chain_valid": result.chain_valid,
+            "tamper_detected": result.tamper_detected,
         }
     except Exception as exc:
-        return {"error": _tool_error(exc)}
+        return {"ok": False, "error": _tool_error(exc)}

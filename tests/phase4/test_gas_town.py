@@ -56,6 +56,7 @@ async def test_reconstruct_agent_context_after_crash():
 
     ctx = await reconstruct_agent_context(store, "credit", "s-crash")
     assert "Session agent-credit-s-crash replayed: 5 events." in ctx.context_text
+    assert "Last 3 events (verbatim payloads):" in ctx.context_text
     assert ctx.last_event_position == 4
     assert ctx.session_health_status in {"HEALTHY", "NEEDS_RECONCILIATION"}
 

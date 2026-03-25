@@ -97,8 +97,11 @@ async def test_mcp_tools_submit_and_start_session():
     integrity = await tools.run_integrity_check_tool(store, {"entity_type": "loan", "entity_id": app_id})
     assert integrity.get("chain_valid") is True
 
-    # Resources should return serializable dict/list values.
+    # Resources should return serializable dict/list values (projections).
     app_res = await resources.application_resource(store, app_id)
     assert app_res is None or isinstance(app_res, dict)
+
+    comp_res = await resources.compliance_resource(store, app_id)
+    assert comp_res is None or isinstance(comp_res, dict)
 
     await conn.close()

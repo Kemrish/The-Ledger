@@ -18,9 +18,9 @@ class UpcasterRegistry:
 
     def upcast(self, event: StoredEvent) -> StoredEvent:
         current = event
-        v = event.event_version
-        while (event.event_type, v) in self._upcasters:
-            fn = self._upcasters[(event.event_type, v)]
+        v = current.event_version
+        while (current.event_type, v) in self._upcasters:
+            fn = self._upcasters[(current.event_type, v)]
             new_payload = fn(current.payload)
             current = current.with_payload(new_payload, version=v + 1)
             v += 1

@@ -2,6 +2,8 @@
 
 Event sourcing and audit backbone for multi-agent AI systems (Apex Financial Services scenario).
 
+**Design & rubric mapping:** see [`DESIGN.md`](DESIGN.md) (schema justification, CQRS, concurrency, upcasting, MCP). Conceptual notes remain in `DOMAIN_NOTES.md` if present.
+
 ## Setup
 
 - **Python 3.11+**
@@ -126,3 +128,24 @@ You can also trigger a run manually: **Actions** → **CI** → **Run workflow**
 - `tests/phase4/test_upcasting.py` — Upcasting immutability baseline.
 - `tests/phase4/test_gas_town.py` — Crash recovery context reconstruction baseline.
 - `tests/phase5/test_mcp_lifecycle.py` — MCP tool-driven lifecycle baseline.
+
+## UI (Demo)
+
+This project includes a minimal web UI that runs the projection daemon and lets you append a full loan lifecycle via the backend.
+
+### Run
+
+1. Ensure Postgres is running and the schema is applied:
+
+```bash
+psql -d ledger_test -f src/schema.sql
+```
+
+2. Start the UI server:
+
+```bash
+uv run uvicorn src.ui.server:app --reload --port 8766
+```
+
+3. Open `http://localhost:8766` in your browser.
+4. Click **“Run demo”** to execute a deterministic end-to-end lifecycle and display the projection row.

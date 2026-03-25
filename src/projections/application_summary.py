@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from ..event_store import EventStore
 from ..models.events import StoredEvent
 
@@ -17,12 +19,18 @@ class ApplicationSummaryProjection:
         state_map = {
             "ApplicationSubmitted": "Submitted",
             "CreditAnalysisCompleted": "AnalysisComplete",
+            "FraudScreeningCompleted": "AnalysisComplete",
             "DecisionGenerated": "PendingDecision",
             "HumanReviewCompleted": "Reviewed",
             "ApplicationApproved": "FinalApproved",
             "ApplicationDeclined": "FinalDeclined",
         }
-        state = state_map.get(event.event_type, "Unknown")
+        # Important: the ApplicationSummary projection should only update on
+        # domain lifecycle transitions; unrelated loan-stream events must not
+        # overwrite state as "Unknown".
+        if event.event_type not in state_map:
+            return
+        state = state_map[event.event_type]
 
         await store._conn.execute(
             """
@@ -58,9 +66,12 @@ class ApplicationSummaryProjection:
             p.get("fraud_score"),
             p.get("compliance_status"),
             p.get("recommendation") or p.get("final_decision"),
-            [],
+            json.dumps([]),
             event.event_type,
             event.recorded_at,
             p.get("reviewer_id"),
             event.recorded_at if event.event_type in ("ApplicationApproved", "ApplicationDeclined") else None,
         )
+
+    async def rebuild_from_scratch(self, store: EventStore) -> None:
+        await store._conn.execute("TRUNCATE TABLE application_summary_projection")

@@ -66,3 +66,6 @@ class AgentPerformanceProjection:
                     agent_id,
                     model_version,
                 )
+
+    async def rebuild_from_scratch(self, store: EventStore) -> None:
+        await store._conn.execute("TRUNCATE TABLE agent_performance_projection")

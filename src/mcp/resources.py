@@ -1,3 +1,10 @@
+"""
+MCP resources (query side of CQRS).
+
+Read models come from projection tables — not full aggregate replay — except where noted:
+  - `audit_trail_resource` / `session_resource` intentionally load streams for audit replay and
+    Gas Town session reconstruction (per spec “justified exception”).
+"""
 from __future__ import annotations
 
 from datetime import datetime

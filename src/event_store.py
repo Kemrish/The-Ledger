@@ -117,6 +117,10 @@ class EventStore:
                 if causation_id:
                     metadata["causation_id"] = causation_id
 
+                # asyncpg expects a JSON-encoded string when using `$x::jsonb` with dict inputs.
+                payload_db = json.dumps(payload) if not isinstance(payload, str) else payload
+                metadata_db = json.dumps(metadata) if not isinstance(metadata, str) else metadata
+
                 await self._conn.execute(
                     """
                     INSERT INTO events (event_id, stream_id, stream_position, event_type, event_version, payload, metadata)
@@ -127,8 +131,8 @@ class EventStore:
                     stream_position,
                     event_type,
                     event_version,
-                    payload,
-                    metadata,
+                    payload_db,
+                    metadata_db,
                 )
                 event_ids.append(event_id)
                 new_version = pos + 1
@@ -149,6 +153,7 @@ class EventStore:
                     "payload": _jsonb_to_python(payload_row["payload"]),
                     "metadata": _jsonb_to_python(payload_row["metadata"]),
                 }
+                out_payload_db = json.dumps(out_payload)
                 await self._conn.execute(
                     """
                     INSERT INTO outbox (event_id, destination, payload)
@@ -156,7 +161,7 @@ class EventStore:
                     """,
                     event_id,
                     self._outbox_destination,
-                    out_payload,
+                    out_payload_db,
                 )
 
         return new_version
@@ -167,7 +172,9 @@ class EventStore:
         from_position: int = 0,
         to_position: int | None = None,
     ) -> list[StoredEvent]:
-        """Load events in stream order, from_position inclusive. to_position inclusive if set. Upcasting applied by caller (store returns raw)."""
+        """Load events in stream order, from_position inclusive; optional to_position inclusive.
+        When an UpcasterRegistry is configured on the store, payloads are upcast in memory only
+        (stored rows are unchanged)."""
         q = """
             SELECT event_id, stream_id, stream_position, global_position, event_type, event_version,
                    payload, metadata, recorded_at
