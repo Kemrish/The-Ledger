@@ -59,9 +59,10 @@ This document satisfies assessment criteria for **schema justification**, **CQRS
 
 ## 4. Aggregates & business rules
 
-- Implemented under `src/aggregates/` (`loan_application`, `agent_session`, `compliance_record`, …) with `load()` + `_apply()` and `DomainError` on invalid transitions.
-- **Decision policy** lives on `LoanApplicationAggregate`: `resolve_decision_recommendation()` applies the **confidence floor** (`DECISION_CONFIDENCE_FLOOR`); `assert_contributing_agent_sessions()` enforces the causal chain. Command handlers orchestrate I/O only (load aggregates, append), not these rules.
-- **Gas Town**: `AgentSession` requires `AgentContextLoaded` before decision events (see command handlers).
+- Four aggregates: **`LoanApplicationAggregate`**, **`AgentSessionAggregate`**, **`ComplianceRecordAggregate`**, **`AuditLedgerAggregate`** — each with `load()` → replay via `_apply()`, explicit **state enums** (`ApplicationState`, `SessionState`, `ComplianceState`, `AuditLedgerState`), and `DomainError` on invalid transitions or replay.
+- **LoanApplication — six business rules (BR1–BR6)** implemented as `br*_enforce_*` / `br*_resolve_*` on the aggregate only: **BR1** unique stream; **BR2** credit analysis eligibility; **BR3** complete analyses before decision; **BR4** compliance cleared before funding; **BR5** approved amount ≤ agent limit; **BR6** causal contributing sessions + confidence floor. Handlers call these methods; they do not duplicate rules.
+- **Compliance**: `build_events_for_command()` returns events to append from command + aggregate state.
+- **Gas Town**: `AgentSession` — `CreditAnalysisCompleted` / `FraudScreeningCompleted` before `AgentContextLoaded` fails replay with `GAS_TOWN_VIOLATION`.
 
 ---
 

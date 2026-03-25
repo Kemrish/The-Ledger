@@ -1,15 +1,27 @@
 """
-AuditLedger aggregate: append-only cross-cutting audit trail.
-Maintains causal ordering via correlation_id; no events may be removed.
+AuditLedger aggregate: integrity checkpoints on stream audit-{entity_type}-{entity_id}.
+
+**State machine (AuditLedgerState)**
+
+- **EMPTY** — no integrity runs yet.
+- **SEALED** — at least one `AuditIntegrityCheckRun`; chain head is `last_integrity_hash`.
+
+The store enforces append-only semantics; this aggregate replays seals for read-side validation.
 """
 from __future__ import annotations
 
+from enum import Enum
 from typing import TYPE_CHECKING
 
-from ..models.events import StoredEvent, DomainError
+from ..models.events import StoredEvent
 
 if TYPE_CHECKING:
     from ..event_store import EventStore
+
+
+class AuditLedgerState(str, Enum):
+    EMPTY = "Empty"
+    SEALED = "Sealed"
 
 
 class AuditLedgerAggregate:
@@ -19,6 +31,7 @@ class AuditLedgerAggregate:
         self.entity_type = entity_type
         self.entity_id = entity_id
         self.version: int = 0
+        self.ledger_state = AuditLedgerState.EMPTY
         self.last_integrity_hash: str | None = None
 
     @classmethod
@@ -38,7 +51,7 @@ class AuditLedgerAggregate:
 
     def _on_AuditIntegrityCheckRun(self, event: StoredEvent) -> None:
         self.last_integrity_hash = event.payload.get("integrity_hash")
+        self.ledger_state = AuditLedgerState.SEALED
 
-    def assert_append_only(self) -> None:
-        """No events may be removed from the audit stream (enforced by store design)."""
-        pass  # Store does not support delete; this is documentation.
+    def enforce_append_only_policy(self) -> None:
+        """Audit streams are append-only; corrections are new events, not updates (enforced by EventStore)."""

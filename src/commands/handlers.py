@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 from ..models.events import (
@@ -21,9 +20,6 @@ from ..models.events import (
     CreditAnalysisRequested,
     CreditAnalysisCompleted,
     FraudScreeningCompleted,
-    ComplianceCheckRequested,
-    ComplianceRulePassed,
-    ComplianceRuleFailed,
     DecisionGenerated,
     HumanReviewCompleted,
     ApplicationApproved,
@@ -79,9 +75,8 @@ async def handle_submit_application(cmd: SubmitApplicationCommand, store: EventS
     stream_id = f"loan-{cmd.application_id}"
     # Load
     version = await store.stream_version(stream_id)
-    # Validate
-    if version != 0:
-        raise DomainError(f"Application {cmd.application_id} already exists", code="DUPLICATE_APPLICATION")
+    # Validate (BR1)
+    LoanApplicationAggregate.br1_enforce_unique_application(version, cmd.application_id)
     # Determine
     events = [
         ApplicationSubmitted(
@@ -103,8 +98,8 @@ async def handle_credit_analysis_completed(cmd: CreditAnalysisCompletedCommand, 
     # Load
     app = await LoanApplicationAggregate.load(store, cmd.application_id)
     agent = await AgentSessionAggregate.load(store, cmd.agent_id, cmd.session_id)
-    # Validate
-    app.assert_awaiting_credit_analysis()
+    # Validate — BR2 + AgentSession
+    app.br2_enforce_credit_analysis_eligibility()
     agent.assert_context_loaded()
     agent.assert_model_version_current(cmd.model_version)
     # Determine
@@ -147,8 +142,7 @@ async def handle_fraud_screening_completed(cmd: FraudScreeningCompletedCommand, 
     agent = await AgentSessionAggregate.load(store, cmd.agent_id, cmd.session_id)
     # Validate
     agent.assert_context_loaded()
-    if not 0.0 <= cmd.fraud_score <= 1.0:
-        raise DomainError("fraud_score must be between 0.0 and 1.0", code="INVALID_FRAUD_SCORE")
+    LoanApplicationAggregate.enforce_fraud_score_range(cmd.fraud_score)
     # Determine
     event = FraudScreeningCompleted(
         application_id=cmd.application_id,
@@ -184,35 +178,7 @@ async def handle_compliance_check(cmd: ComplianceCheckCommand, store: EventStore
     comp = await ComplianceRecordAggregate.load(store, cmd.application_id)
     expected = comp.version
     # Validate / determine
-    events: list[BaseEvent] = []
-    if not comp.checks_required and cmd.checks_required:
-        events.append(
-            ComplianceCheckRequested(
-                application_id=cmd.application_id,
-                regulation_set_version=cmd.regulation_set_version,
-                checks_required=cmd.checks_required,
-            )
-        )
-    if cmd.passed_rule_id:
-        events.append(
-            ComplianceRulePassed(
-                application_id=cmd.application_id,
-                rule_id=cmd.passed_rule_id,
-                rule_version=cmd.passed_rule_version or "",
-                evaluation_timestamp=datetime.now(timezone.utc).isoformat(),
-                evidence_hash=cmd.passed_evidence_hash or "",
-            )
-        )
-    if cmd.failed_rule_id:
-        events.append(
-            ComplianceRuleFailed(
-                application_id=cmd.application_id,
-                rule_id=cmd.failed_rule_id,
-                rule_version=cmd.failed_rule_version or "",
-                failure_reason=cmd.failure_reason or "",
-                remediation_required=cmd.remediation_required,
-            )
-        )
+    events = comp.build_events_for_command(cmd)
     if not events:
         return
     stream_id = f"compliance-{cmd.application_id}"
@@ -231,20 +197,15 @@ async def handle_compliance_check(cmd: ComplianceCheckCommand, store: EventStore
 async def handle_generate_decision(cmd: GenerateDecisionCommand, store: EventStore) -> None:
     # Load
     app = await LoanApplicationAggregate.load(store, cmd.application_id)
-    # Validate
-    app.assert_analysis_complete()
-    agents: list[AgentSessionAggregate] = []
-    for session_stream_id in cmd.contributing_agent_sessions:
-        parts = session_stream_id.replace("agent-", "").split("-", 1)
-        if len(parts) < 2:
-            raise DomainError(
-                f"Invalid contributing_agent_sessions entry: {session_stream_id}",
-                code="INVALID_CAUSAL_CHAIN",
-            )
-        agent_id, session_id = parts[0], parts[1]
-        agents.append(await AgentSessionAggregate.load(store, agent_id, session_id))
-    app.assert_contributing_agent_sessions(agents)
-    recommendation = app.resolve_decision_recommendation(cmd.recommendation, cmd.confidence_score)
+    agents = await LoanApplicationAggregate.load_contributing_agent_sessions(
+        store, cmd.contributing_agent_sessions
+    )
+    # Validate — BR3, BR6
+    app.br3_enforce_analyses_complete_for_decision()
+    app.br6_enforce_contributing_sessions_have_analysis(agents)
+    recommendation = app.br6_resolve_recommendation_with_confidence_floor(
+        cmd.recommendation, cmd.confidence_score
+    )
     # Determine
     event = DecisionGenerated(
         application_id=cmd.application_id,
@@ -270,9 +231,7 @@ async def handle_human_review_completed(cmd: HumanReviewCompletedCommand, store:
     # Load
     app = await LoanApplicationAggregate.load(store, cmd.application_id)
     # Validate
-    app.assert_pending_decision()
-    if cmd.override and not cmd.override_reason:
-        raise DomainError("override_reason required when override=True", code="OVERRIDE_REASON_REQUIRED")
+    app.enforce_human_review_command(cmd.override, cmd.override_reason)
     # Determine
     event = HumanReviewCompleted(
         application_id=cmd.application_id,
@@ -296,9 +255,8 @@ async def handle_application_approved(
 ) -> None:
     # Load
     app = await LoanApplicationAggregate.load(store, application_id)
-    # Validate
-    app.assert_approved_pending_human()
-    app.assert_can_approve(approved_amount_usd)
+    # Validate — BR4, BR5
+    app.enforce_funding_approval_command(approved_amount_usd)
     # Determine
     event = ApplicationApproved(
         application_id=application_id,
@@ -322,7 +280,7 @@ async def handle_application_declined(
     # Load
     app = await LoanApplicationAggregate.load(store, application_id)
     # Validate
-    app.assert_declined_pending_human()
+    app.enforce_final_decline_command()
     # Determine
     event = ApplicationDeclined(
         application_id=application_id,
@@ -340,11 +298,7 @@ async def handle_start_agent_session(cmd: StartAgentSessionCommand, store: Event
     # Load
     version = await store.stream_version(stream_id)
     # Validate
-    if version != 0:
-        raise DomainError(
-            f"Agent session {stream_id} already exists",
-            code="DUPLICATE_SESSION",
-        )
+    AgentSessionAggregate.enforce_new_session_stream(version, stream_id)
     # Determine
     event = AgentContextLoaded(
         agent_id=cmd.agent_id,
