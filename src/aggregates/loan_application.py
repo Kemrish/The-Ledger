@@ -15,13 +15,15 @@ ApprovedPendingHuman | DeclinedPendingHuman → FinalApproved | FinalDeclined
 - **BR1 — Unique application:** A new loan stream may only be created when the stream does not exist.
 - **BR2 — Credit analysis eligibility:** Credit analysis may be recorded at most once and only while
   the application is awaiting credit analysis (Submitted or AwaitingAnalysis).
-- **BR3 — Analyses complete before decision:** Both credit and fraud analyses must be complete before
-  an orchestrator decision is allowed.
+- **BR3 — Analyses complete before decision:** Credit, fraud, and **bank policy** evaluation must be
+  complete before an orchestrator decision is allowed.
 - **BR4 — Compliance before funding:** Compliance must be cleared (from the ComplianceRecord stream)
   before any funding approval amount is accepted.
 - **BR5 — Credit limit:** Approved amount cannot exceed the agent-assessed recommended limit.
 - **BR6 — Orchestrator policy:** Contributing agent sessions must have produced analysis for this
   application (causal chain); recommendation must respect the confidence floor (coerce to REFER).
+- **BR7 — Internal policy before funding:** Bank policy evaluation must be recorded and must not be
+  **BLOCK** before an approval amount is accepted.
 """
 from __future__ import annotations
 
@@ -79,6 +81,8 @@ class LoanApplicationAggregate:
         self.recommended_limit_usd: float | None = None
         self.credit_analysis_done = False
         self.fraud_screening_done = False
+        self.policy_evaluation_done = False
+        self.policy_recommended_action: str | None = None
         self.compliance_cleared = False
         self.decision_recommendation: str | None = None
         self.human_reviewer_id: str | None = None
@@ -159,6 +163,11 @@ class LoanApplicationAggregate:
         if self.credit_analysis_done:
             self._transition(ApplicationState.ANALYSIS_COMPLETE)
 
+    def _on_PolicyEvaluationCompleted(self, event: StoredEvent) -> None:
+        p = event.payload
+        self.policy_evaluation_done = True
+        self.policy_recommended_action = str(p.get("recommended_action") or "")
+
     def _on_DecisionGenerated(self, event: StoredEvent) -> None:
         p = event.payload
         self.decision_recommendation = p.get("recommendation")
@@ -194,6 +203,19 @@ class LoanApplicationAggregate:
 
     # --- BR2: credit analysis --------------------------------------------------------
 
+    def br_policy_enforce_evaluation_eligibility(self) -> None:
+        """At most one policy evaluation; only after credit and fraud are complete."""
+        if self.policy_evaluation_done:
+            raise DomainError(
+                "Policy evaluation already completed for this application",
+                code="DUPLICATE_POLICY_EVALUATION",
+            )
+        if not self.credit_analysis_done or not self.fraud_screening_done:
+            raise DomainError(
+                "Credit and fraud analyses must complete before policy evaluation",
+                code="PREREQUISITE_ANALYSIS_INCOMPLETE",
+            )
+
     def br2_enforce_credit_analysis_eligibility(self) -> None:
         """BR2: at most one credit analysis; only while awaiting analysis."""
         if self.credit_analysis_done:
@@ -210,10 +232,10 @@ class LoanApplicationAggregate:
     # --- BR3: analyses before decision -----------------------------------------------
 
     def br3_enforce_analyses_complete_for_decision(self) -> None:
-        """BR3: credit and fraud must both be complete."""
-        if not self.credit_analysis_done or not self.fraud_screening_done:
+        """BR3: credit, fraud, and bank policy evaluation must be complete."""
+        if not self.credit_analysis_done or not self.fraud_screening_done or not self.policy_evaluation_done:
             raise DomainError(
-                "Credit and fraud analysis must be complete before decision",
+                "Credit, fraud, and bank policy evaluation must be complete before decision",
                 code="ANALYSIS_INCOMPLETE",
             )
 
@@ -225,6 +247,19 @@ class LoanApplicationAggregate:
             raise DomainError(
                 "Compliance checks must be cleared before approval",
                 code="COMPLIANCE_PENDING",
+            )
+
+    def br7_enforce_internal_policy_allows_funding(self) -> None:
+        """BR7: internal bank policy must not BLOCK funding."""
+        if not self.policy_evaluation_done:
+            raise DomainError(
+                "Bank policy evaluation must be recorded before funding",
+                code="POLICY_PENDING",
+            )
+        if (self.policy_recommended_action or "").upper() == "BLOCK":
+            raise DomainError(
+                "Internal bank policy blocks funding for this application",
+                code="POLICY_BLOCKED",
             )
 
     # --- BR5: credit limit -----------------------------------------------------------
@@ -278,6 +313,7 @@ class LoanApplicationAggregate:
             )
         self.br4_enforce_compliance_cleared_for_funding()
         self.br5_enforce_approved_amount_within_agent_limit(approved_amount_usd)
+        self.br7_enforce_internal_policy_allows_funding()
 
     def enforce_final_decline_command(self) -> None:
         if self.state != ApplicationState.DECLINED_PENDING_HUMAN:
@@ -308,6 +344,7 @@ class LoanApplicationAggregate:
     def assert_can_approve(self, approved_amount_usd: float) -> None:
         self.br4_enforce_compliance_cleared_for_funding()
         self.br5_enforce_approved_amount_within_agent_limit(approved_amount_usd)
+        self.br7_enforce_internal_policy_allows_funding()
 
     def assert_pending_decision(self) -> None:
         if self.state != ApplicationState.PENDING_DECISION:

@@ -70,7 +70,7 @@ This document satisfies assessment criteria for **schema justification**, **CQRS
 
 - **`ProjectionDaemon`** (`src/projections/daemon.py`): background `asyncio` loop; advisory locks per projection; checkpoints; **lag** via `get_lag` / `get_all_lags`; retries then skips poison events.
 - **Projections**: `ApplicationSummary`, `AgentPerformanceLedger`, `ComplianceAuditView` — tables in `src/schema.sql`.
-- **Compliance temporal query**: `ComplianceAuditProjection.get_compliance_at(store, application_id, as_of)` uses `as_of_recorded_at` and `as_of_event_position` history.
+- **Compliance temporal query**: `ComplianceAuditProjection.get_compliance_at(store, application_id, as_of)` uses `as_of_recorded_at` and `as_of_event_position` history. The Ledger UI exposes this via `GET /api/compliance/as_of` (and `GET /api/compliance/history` for recent snapshots); see `src/ui/server.py`.
 - **Rebuild**: each projection exposes `rebuild_from_scratch`; `rebuild_projections_full()` truncates and resets checkpoints; `rebuild_projections_from_scratch()` additionally runs `ProjectionDaemon` until lag is zero.
 - **Load SLO**: `tests/phase3/test_projection_load_slo.py` — concurrent submits (connection pool), bounded catch-up time, then `rebuild_projections_from_scratch` with row-count assertions.
 

@@ -3,6 +3,9 @@ import asyncio
 import os
 
 import asyncpg
+from dotenv import load_dotenv
+
+load_dotenv()
 import pytest
 
 from src.event_store import EventStore

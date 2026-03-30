@@ -82,6 +82,14 @@ class AgentSessionAggregate:
             )
         self.application_ids_with_decision.add(event.payload.get("application_id", ""))
 
+    def _on_PolicyEvaluationCompleted(self, event: StoredEvent) -> None:
+        if not self.context_loaded:
+            raise DomainError(
+                "Invalid stream: PolicyEvaluationCompleted before AgentContextLoaded",
+                code="GAS_TOWN_VIOLATION",
+            )
+        self.application_ids_with_decision.add(event.payload.get("application_id", ""))
+
     def assert_context_loaded(self) -> None:
         if not self.context_loaded or self.session_state != SessionState.READY:
             raise DomainError(

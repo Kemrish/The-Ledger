@@ -93,6 +93,40 @@ TOOL_SPECS: list[dict] = [
         "success_shape": {"ok": True},
     },
     {
+        "name": "record_policy_evaluation",
+        "description": "Append PolicyEvaluationCompleted (internal bank policy) to agent and loan streams.",
+        "preconditions": [
+            "Agent session must exist with AgentContextLoaded.",
+            "Credit and fraud analyses must be complete on the loan aggregate (BR3).",
+        ],
+        "input_schema": {
+            "type": "object",
+            "required": [
+                "application_id",
+                "agent_id",
+                "session_id",
+                "model_version",
+                "loan_purpose",
+                "requested_amount_usd",
+                "risk_tier",
+                "fraud_score",
+            ],
+            "properties": {
+                "application_id": {"type": "string"},
+                "agent_id": {"type": "string"},
+                "session_id": {"type": "string"},
+                "model_version": {"type": "string"},
+                "loan_purpose": {"type": "string"},
+                "requested_amount_usd": {"type": "number"},
+                "risk_tier": {"type": "string"},
+                "fraud_score": {"type": "number"},
+                "duration_ms": {"type": "integer"},
+                "input_data": {"type": "object"},
+            },
+        },
+        "success_shape": {"ok": True},
+    },
+    {
         "name": "record_compliance_check",
         "description": "Append compliance events on compliance-{application_id}.",
         "preconditions": ["Valid compliance command per handlers (rules, evidence)."],
@@ -103,7 +137,7 @@ TOOL_SPECS: list[dict] = [
         "name": "generate_decision",
         "description": "Append DecisionGenerated after analyses complete and causal chain validated.",
         "preconditions": [
-            "Credit and fraud complete on loan aggregate.",
+            "Credit, fraud, and bank policy evaluation complete on loan aggregate (BR3).",
             "Each contributing_agent_sessions entry must have contributed analysis for the application.",
         ],
         "input_schema": {

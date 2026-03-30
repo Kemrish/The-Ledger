@@ -20,6 +20,7 @@ from ..models.events import (
     CreditAnalysisRequested,
     CreditAnalysisCompleted,
     FraudScreeningCompleted,
+    PolicyEvaluationCompleted,
     DecisionGenerated,
     HumanReviewCompleted,
     ApplicationApproved,
@@ -28,6 +29,7 @@ from ..models.events import (
     BaseEvent,
     DomainError,
 )
+from ..agents.policy_limits import evaluate_bank_policy
 from ..aggregates.agent_session import AgentSessionAggregate
 from ..aggregates.loan_application import LoanApplicationAggregate
 from ..aggregates.compliance_record import ComplianceRecordAggregate
@@ -35,6 +37,7 @@ from .models import (
     SubmitApplicationCommand,
     CreditAnalysisCompletedCommand,
     FraudScreeningCompletedCommand,
+    PolicyEvaluationCompletedCommand,
     ComplianceCheckCommand,
     GenerateDecisionCommand,
     HumanReviewCompletedCommand,
@@ -155,6 +158,53 @@ async def handle_fraud_screening_completed(cmd: FraudScreeningCompletedCommand, 
     agent_stream_id = f"agent-{cmd.agent_id}-{cmd.session_id}"
     loan_stream_id = f"loan-{cmd.application_id}"
     # Append
+    await _append_stream(
+        store,
+        agent_stream_id,
+        [event],
+        expected_version=agent.version,
+        correlation_id=cmd.correlation_id,
+        causation_id=cmd.causation_id,
+    )
+    await _append_stream(
+        store,
+        loan_stream_id,
+        [event],
+        expected_version=app.version,
+        correlation_id=cmd.correlation_id,
+        causation_id=cmd.causation_id,
+    )
+
+
+async def handle_policy_evaluation_completed(cmd: PolicyEvaluationCompletedCommand, store: EventStore) -> None:
+    """Internal bank policy evaluation on agent stream then loan stream."""
+    app = await LoanApplicationAggregate.load(store, cmd.application_id)
+    agent = await AgentSessionAggregate.load(store, cmd.agent_id, cmd.session_id)
+    app.br_policy_enforce_evaluation_eligibility()
+    agent.assert_context_loaded()
+    agent.assert_model_version_current(cmd.model_version)
+
+    outcome = evaluate_bank_policy(
+        loan_purpose=cmd.loan_purpose,
+        requested_amount_usd=cmd.requested_amount_usd,
+        risk_tier=cmd.risk_tier,
+        fraud_score=cmd.fraud_score,
+    )
+    input_hash = hash_inputs(cmd.input_data)
+    event = PolicyEvaluationCompleted(
+        application_id=cmd.application_id,
+        agent_id=cmd.agent_id,
+        session_id=cmd.session_id,
+        model_version=cmd.model_version,
+        policy_set_version=outcome["policy_set_version"],
+        policy_passed=bool(outcome["policy_passed"]),
+        recommended_action=str(outcome["recommended_action"]),
+        policy_violations=list(outcome.get("policy_violations") or []),
+        evaluation_duration_ms=cmd.duration_ms,
+        input_data_hash=input_hash,
+    )
+    agent_stream_id = f"agent-{cmd.agent_id}-{cmd.session_id}"
+    loan_stream_id = f"loan-{cmd.application_id}"
     await _append_stream(
         store,
         agent_stream_id,

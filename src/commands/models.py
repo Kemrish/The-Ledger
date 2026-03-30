@@ -45,6 +45,21 @@ class FraudScreeningCompletedCommand(BaseModel):
     causation_id: str | None = None
 
 
+class PolicyEvaluationCompletedCommand(BaseModel):
+    application_id: str
+    agent_id: str
+    session_id: str
+    model_version: str
+    loan_purpose: str
+    requested_amount_usd: float
+    risk_tier: str
+    fraud_score: float
+    duration_ms: int = 0
+    input_data: dict | None = None
+    correlation_id: str | None = None
+    causation_id: str | None = None
+
+
 class ComplianceCheckCommand(BaseModel):
     application_id: str
     regulation_set_version: str

@@ -1,4 +1,5 @@
 import os
+import uuid
 
 import asyncpg
 import pytest
@@ -24,7 +25,8 @@ async def test_mcp_tools_submit_and_start_session():
     await apply_schema(conn)
     store = EventStore(conn)
 
-    app_id = "mcp-1"
+    app_id = f"mcp-{uuid.uuid4().hex[:12]}"
+    sid = f"s-{uuid.uuid4().hex[:10]}"
     res = await tools.submit_application(store, {
         "application_id": app_id,
         "applicant_id": "u1",
@@ -35,24 +37,32 @@ async def test_mcp_tools_submit_and_start_session():
 
     ses = await tools.start_agent_session(store, {
         "agent_id": "credit",
-        "session_id": "s1",
+        "session_id": sid,
         "context_source": "fresh",
         "model_version": "v1",
     })
-    assert ses["session_id"] == "agent-credit-s1"
+    assert ses["session_id"] == f"agent-credit-{sid}"
 
     ses2 = await tools.start_agent_session(store, {
         "agent_id": "fraud",
-        "session_id": "s1",
+        "session_id": sid,
         "context_source": "fresh",
         "model_version": "v1",
     })
-    assert ses2["session_id"] == "agent-fraud-s1"
+    assert ses2["session_id"] == f"agent-fraud-{sid}"
+
+    ses3 = await tools.start_agent_session(store, {
+        "agent_id": "policy",
+        "session_id": sid,
+        "context_source": "fresh",
+        "model_version": "v1",
+    })
+    assert ses3["session_id"] == f"agent-policy-{sid}"
 
     credit = await tools.record_credit_analysis(store, {
         "application_id": app_id,
         "agent_id": "credit",
-        "session_id": "s1",
+        "session_id": sid,
         "model_version": "v1",
         "confidence_score": 0.85,
         "risk_tier": "LOW",
@@ -65,7 +75,7 @@ async def test_mcp_tools_submit_and_start_session():
     fraud = await tools.record_fraud_screening(store, {
         "application_id": app_id,
         "agent_id": "fraud",
-        "session_id": "s1",
+        "session_id": sid,
         "fraud_score": 0.1,
         "anomaly_flags": [],
         "screening_model_version": "v1",
@@ -73,15 +83,33 @@ async def test_mcp_tools_submit_and_start_session():
     })
     assert fraud.get("ok") is True
 
+    policy = await tools.record_policy_evaluation(store, {
+        "application_id": app_id,
+        "agent_id": "policy",
+        "session_id": sid,
+        "model_version": "v1",
+        "loan_purpose": "growth",
+        "requested_amount_usd": 10000,
+        "risk_tier": "LOW",
+        "fraud_score": 0.1,
+        "duration_ms": 30,
+        "input_data": {"agent": "policy_limits"},
+    })
+    assert policy.get("ok") is True
+
     decision = await tools.generate_decision(store, {
         "application_id": app_id,
         "orchestrator_agent_id": "orch-1",
-        "session_id": "s1",
+        "session_id": sid,
         "recommendation": "APPROVE",
         "confidence_score": 0.92,
-        "contributing_agent_sessions": ["agent-credit-s1", "agent-fraud-s1"],
+        "contributing_agent_sessions": [
+            f"agent-credit-{sid}",
+            f"agent-fraud-{sid}",
+            f"agent-policy-{sid}",
+        ],
         "decision_basis_summary": "Healthy metrics, low fraud risk.",
-        "model_versions": {"credit": "v1", "fraud": "v1"},
+        "model_versions": {"credit": "v1", "fraud": "v1", "policy": "v1"},
     })
     assert decision.get("ok") is True
 

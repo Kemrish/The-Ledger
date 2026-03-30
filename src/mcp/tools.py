@@ -7,10 +7,11 @@ Each async function is suitable for binding to an MCP server (e.g. FastMCP). Ret
     include structured fields for LLM recovery (`suggested_action`, `code`, `stream_id`, …).
 
 Preconditions (representative):
-  - `start_agent_session` MUST run before `record_credit_analysis` / `record_fraud_screening` / `generate_decision`
-    (Gas Town: AgentContextLoaded first).
+  - `start_agent_session` MUST run before `record_credit_analysis` / `record_fraud_screening` /
+    `record_policy_evaluation` / `generate_decision` (Gas Town: AgentContextLoaded first).
   - `submit_application` before domain commands that reference `application_id`.
-  - `generate_decision` requires prior credit + fraud analyses and compliance cleared per aggregate rules.
+  - `generate_decision` requires prior credit + fraud + bank policy evaluation on the loan aggregate (BR3);
+    compliance clearance is required for funding (application approved), not for the decision event itself (BR4).
 """
 from __future__ import annotations
 
@@ -18,6 +19,7 @@ from ..commands.handlers import (
     handle_submit_application,
     handle_credit_analysis_completed,
     handle_fraud_screening_completed,
+    handle_policy_evaluation_completed,
     handle_compliance_check,
     handle_generate_decision,
     handle_human_review_completed,
@@ -27,6 +29,7 @@ from ..commands.models import (
     SubmitApplicationCommand,
     CreditAnalysisCompletedCommand,
     FraudScreeningCompletedCommand,
+    PolicyEvaluationCompletedCommand,
     ComplianceCheckCommand,
     GenerateDecisionCommand,
     HumanReviewCompletedCommand,
@@ -92,6 +95,15 @@ async def record_fraud_screening(store, payload: dict):
             }
         cmd = FraudScreeningCompletedCommand(**payload)
         await handle_fraud_screening_completed(cmd, store)
+        return {"ok": True}
+    except Exception as exc:
+        return {"ok": False, "error": _tool_error(exc)}
+
+
+async def record_policy_evaluation(store, payload: dict):
+    try:
+        cmd = PolicyEvaluationCompletedCommand(**payload)
+        await handle_policy_evaluation_completed(cmd, store)
         return {"ok": True}
     except Exception as exc:
         return {"ok": False, "error": _tool_error(exc)}

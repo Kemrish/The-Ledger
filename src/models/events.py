@@ -171,6 +171,21 @@ class FraudScreeningCompleted(BaseEvent):
     input_data_hash: str
 
 
+class PolicyEvaluationCompleted(BaseEvent):
+    """AgentSession v1. Internal bank policy / underwriting limits (not regulatory compliance)."""
+
+    application_id: str
+    agent_id: str
+    session_id: str
+    model_version: str | None = None
+    policy_set_version: str
+    policy_passed: bool
+    recommended_action: str  # PASS | REFER | BLOCK
+    policy_violations: list[str] = Field(default_factory=list)
+    evaluation_duration_ms: int = 0
+    input_data_hash: str
+
+
 class ComplianceCheckRequested(BaseEvent):
     """ComplianceRecord v1."""
 
@@ -269,6 +284,7 @@ EVENT_TYPE_TO_CLASS: dict[str, type[BaseEvent]] = {
     "CreditAnalysisRequested": CreditAnalysisRequested,
     "CreditAnalysisCompleted": CreditAnalysisCompleted,
     "FraudScreeningCompleted": FraudScreeningCompleted,
+    "PolicyEvaluationCompleted": PolicyEvaluationCompleted,
     "ComplianceCheckRequested": ComplianceCheckRequested,
     "ComplianceRulePassed": ComplianceRulePassed,
     "ComplianceRuleFailed": ComplianceRuleFailed,
